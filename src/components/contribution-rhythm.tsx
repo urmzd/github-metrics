@@ -117,10 +117,10 @@ export function renderContributionRhythm(
       <polygon
         points={points}
         fill={BAR_COLORS[0]}
-        fill-opacity="0.2"
+        fill-opacity="0.3"
         stroke={BAR_COLORS[0]}
-        stroke-width="2"
-        stroke-opacity="0.8"
+        stroke-width="3"
+        stroke-opacity="0.95"
         className="fade-2"
         style={`transform-origin: ${radarCx}px ${radarCy}px`}
       />
@@ -138,6 +138,9 @@ export function renderContributionRhythm(
             cy={py}
             r="3"
             fill={BAR_COLORS[0]}
+            stroke="#ffffff"
+            stroke-opacity="0.45"
+            stroke-width="1"
             className={`fade-${Math.min(i + 1, 6)}`}
           />
         );

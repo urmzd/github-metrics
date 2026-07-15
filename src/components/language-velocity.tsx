@@ -13,8 +13,8 @@ export function renderLanguageVelocity(
 
   const { padX } = LAYOUT;
   const chartWidth = 760;
-  const chartHeight = 140;
-  const labelHeight = 20;
+  const chartHeight = 152;
+  const labelHeight = 28;
   const totalHeight = chartHeight + labelHeight;
 
   // Collect all unique languages across all months
@@ -132,7 +132,7 @@ export function renderLanguageVelocity(
           key={p.name}
           d={p.path}
           fill={p.color}
-          fill-opacity="0.75"
+          fill-opacity="0.88"
           className={`fade-${Math.min(i + 1, 6)}`}
         />
       ))}
@@ -153,7 +153,7 @@ export function renderLanguageVelocity(
                 height="8"
                 rx="2"
                 fill={color}
-                opacity="0.85"
+                opacity="0.95"
               />
               <text x={x + 12} y={y + chartHeight + 14} className="t t-value">
                 {escapeXml(name)}

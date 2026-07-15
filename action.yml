@@ -45,6 +45,9 @@ inputs:
   export-json:
     description: "Export underlying JSON data alongside SVGs for auditing"
     default: "false"
+  cache:
+    description: "Reuse AI outputs when inputs are unchanged"
+    default: "true"
 runs:
   using: "node24"
   main: "dist/index.js"

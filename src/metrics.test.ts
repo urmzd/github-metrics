@@ -3,9 +3,11 @@ import {
   makeContributionCalendar,
   makeContributionData,
   makeRepo,
+  makeUserProfile,
 } from "./__fixtures__/repos.js";
 import {
   aggregateLanguages,
+  buildInsightsReport,
   buildSections,
   collectAllDependencies,
   collectAllTopics,
@@ -544,6 +546,59 @@ describe("splitProjectsByRecency", () => {
       aiClassifications,
     );
     expect(active[0].summary).toBe("A great project for testing");
+  });
+});
+
+// ── buildInsightsReport ───────────────────────────────────────────────────
+
+describe("buildInsightsReport", () => {
+  it("excludes archived repos from visual selections when configured", () => {
+    const repos = [
+      makeRepo({
+        name: "current-tool",
+        stargazerCount: 1,
+        primaryLanguage: { name: "TypeScript", color: "#3178c6" },
+        languages: {
+          totalSize: 1000,
+          edges: [
+            { size: 1000, node: { name: "TypeScript", color: "#3178c6" } },
+          ],
+        },
+      }),
+      makeRepo({
+        name: "archived-heavy",
+        isArchived: true,
+        stargazerCount: 500,
+        diskUsage: 50000,
+        primaryLanguage: { name: "Python", color: "#3572A5" },
+        languages: {
+          totalSize: 100000,
+          edges: [{ size: 100000, node: { name: "Python", color: "#3572A5" } }],
+        },
+      }),
+    ];
+
+    const report = buildInsightsReport({
+      username: "user",
+      displayName: "Test User",
+      profile: makeUserProfile(),
+      repos,
+      contributionData: makeContributionData(),
+      aiClassifications: [],
+      constellationGroupBy: "language",
+      excludeArchived: true,
+    });
+
+    expect(report.archivedProjects.map((p) => p.name)).toEqual([
+      "archived-heavy",
+    ]);
+    expect(report.languages.map((l) => l.name)).not.toContain("Python");
+    expect(report.constellation.map((p) => p.name)).not.toContain(
+      "archived-heavy",
+    );
+    expect(report.allProjects.map((p) => p.name)).not.toContain(
+      "archived-heavy",
+    );
   });
 });
 

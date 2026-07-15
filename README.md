@@ -117,10 +117,14 @@ github-insights generate \
 | `-t, --token <token>` | GitHub token | `$GITHUB_TOKEN` |
 | `-u, --username <username>` | GitHub username | `$GITHUB_REPOSITORY_OWNER` |
 | `-o, --output-dir <dir>` | Output directory for SVGs | `assets/insights` |
+| `--config-file <path>` | Config file path | `$CONFIG_FILE` |
 | `--readme-path <path>` | README output path (`none` to skip) | `none` (local) / `README.md` (CI) |
+| `--examples-dir <dir>` | Local preset gallery output (`none` to skip) | `examples` (local) / `none` (CI) |
 | `--template <name>` | Template preset | `showcase` |
 | `--sections <list>` | Comma-separated section list (overrides template) | |
 | `--fail-fast` | Exit with error instead of falling back to heuristics when AI is unavailable | `false` |
+| `--no-cache` | Recompute AI outputs instead of reusing unchanged cached results | cache enabled |
+| `--format <format>` | Output format (`human` or `json`; `json` exports section data) | `human` |
 
 ### GitHub Action (CI)
 
@@ -167,6 +171,8 @@ The action commits updated SVGs and a generated `README.md` to your repo automat
 | `commit-name` | Git user name for commits | `github-actions[bot]` |
 | `commit-email` | Git user email for commits | `41898282+github-actions[bot]@users.noreply.github.com` |
 | `fail-fast` | Exit with error instead of falling back to heuristics when AI is unavailable | `false` |
+| `export-json` | Export section JSON data alongside SVGs | `false` |
+| `cache` | Reuse previous AI outputs when inputs are unchanged (stored in `<output-dir>/.ai-cache.json`) | `true` |
 
 ## Configuration
 
@@ -182,6 +188,7 @@ preamble: PREAMBLE.md      # path to custom preamble (optional)
 template: showcase          # section preset (optional)
 exclude_archived: true      # exclude archived repos from portfolio (default: true)
 fail_fast: false            # fail instead of falling back to heuristics (default: false)
+cache: true                 # reuse AI outputs when inputs are unchanged (default: true)
 sections:                   # explicit section order (overrides template)
   - spotlight
   - velocity
@@ -194,12 +201,12 @@ sections:                   # explicit section order (overrides template)
 # Values can be inline strings or paths to .txt/.md files.
 ai:
   preamble:
-    model: gpt-4.1           # GitHub Models model ID
+    model: openai/gpt-4.1    # GitHub Models model ID (publisher/model)
     temperature: 0.5
     system: prompts/preamble-system.txt
     user: prompts/preamble-user.txt
   classification:
-    model: gpt-4.1
+    model: openai/gpt-4.1
     temperature: 0.15
     system: prompts/classification-system.txt
     user: prompts/classification-user.txt
@@ -217,7 +224,7 @@ To use your own text instead, create a `PREAMBLE.md` file in the repo root, or p
 
 ### Project Classification
 
-The action uses GitHub Models (default: `gpt-4.1`) to classify repositories by maintenance status (active/maintained/inactive) and purpose category (Developer Tools, SDKs, Applications, Research & Experiments), with AI-generated summaries for each project. The AI also ranks spotlight candidates.
+The action uses GitHub Models (default: `openai/gpt-4.1`) to classify repositories by maintenance status (active/maintained/inactive) and purpose category (Developer Tools, SDKs, Applications, Research & Experiments), with AI-generated summaries for each project. The AI also ranks spotlight candidates.
 
 ### Customizing AI Prompts
 
@@ -226,18 +233,21 @@ You can override the model, temperature, system prompt, and user prompt for both
 ```yaml
 ai:
   preamble:
-    model: gpt-4.1        # any GitHub Models model ID
+    model: openai/gpt-4.1 # any GitHub Models model ID
     temperature: 0.5
     system: prompts/my-system-prompt.txt   # file path or inline string
     user: prompts/my-user-prompt.txt
   classification:
-    model: gpt-4.1
+    model: openai/gpt-4.1
     temperature: 0.15
     system: "You are a project classifier."  # inline string
     user: prompts/classification-user.txt
 ```
 
 Prompt values that end in `.txt` or `.md` (or are absolute paths) are read from disk; all other values are used as inline prompt text. If a file path is specified but the file is not found, the built-in default prompt is used with a warning.
+
+> [!NOTE]
+> Model availability depends on your Copilot plan. Without a paid Copilot plan, only low/high rate-limit-tier models (e.g. `openai/gpt-4.1`, `meta/llama-4-maverick-17b-128e-instruct-fp8`) are usable — custom-tier models such as `openai/gpt-5` and `openai/o3` return `400 Unavailable model`. See the [GitHub Models catalog](https://github.com/marketplace?type=models) and [rate limits](https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models#rate-limits).
 
 ### Token Permissions
 
@@ -261,6 +271,10 @@ permissions:
 | 5 | API error |
 
 By default, AI failures are non-fatal — the pipeline falls back to heuristic classification and skips the AI preamble. Set `fail-fast: true` (action) or `--fail-fast` (CLI) to treat AI failures as errors with the appropriate exit code.
+
+### AI Output Caching
+
+AI outputs (project classifications and the preamble) are cached in `<output-dir>/.ai-cache.json`, keyed by a hash of everything that feeds each model call — repo data, profile data, config, and prompt settings. When nothing changed since the last run, the cached output is reused and no model call is made. Since the cache file lives in the output directory, the action commits it alongside the SVGs, so scheduled CI runs skip AI calls on quiet days. Disable with `cache: false` (action or config) or `--no-cache` (CLI).
 
 ## Sections
 
@@ -339,7 +353,18 @@ npm run fmt         # format check
 npm run fmt:fix     # format fix
 ```
 
-> **Note:** When running locally (outside CI), `commit-push` defaults to `false` and `readme-path` defaults to `none` (skipped), so generation will not overwrite your project README or push commits. A preview is generated at `examples/default/README.md`.
+> **Note:** When running locally (outside CI), `commit-push` defaults to `false` and `readme-path` defaults to `none` (skipped), so generation will not overwrite your project README or push commits. A preset gallery is generated at `examples/README.md` by default. Set `--examples-dir none` to skip it.
+
+To preview this action against a nearby profile repo:
+
+```sh
+github-insights generate \
+  --username urmzd \
+  --config-file ../urmzd/github-insights.yml \
+  --output-dir assets/insights \
+  --examples-dir examples \
+  --readme-path none
+```
 
 ## Output Files
 
@@ -350,8 +375,11 @@ npm run fmt:fix     # format fix
 | `assets/insights/metrics-rhythm.svg` | Contribution Rhythm radar + stats |
 | `assets/insights/metrics-constellation.svg` | Project Constellation map |
 | `assets/insights/metrics-impact.svg` | Open Source Impact trail |
+| `assets/insights/metrics-stack.svg` | Tech Stack layer map (when `stack` is included) |
+| `assets/insights/.ai-cache.json` | Cached AI classifications and preambles for unchanged inputs |
 | `README.md` | Generated profile README (CI only) |
-| `examples/default/README.md` | Local preview (generated when `--readme-path` is not `none`) |
+| `examples/README.md` | Local gallery showing each template preset |
+| `examples/{showcase,ecosystem,modern,classic,minimal}/README.md` | Per-preset local README previews |
 | `showcase/demo.gif` | Terminal demo recording (generated by `npm run showcase`) |
 
 ## Agent Skill

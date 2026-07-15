@@ -101,16 +101,28 @@ export function renderProjectConstellation(
 
     // Complexity bar
     svg += (
-      <rect
-        x={barStartX}
-        y={curY + 8}
-        width={barWidth}
-        height="14"
-        rx="4"
-        fill={bar.primaryColor}
-        fill-opacity="0.7"
-        className={`fade-${delay}`}
-      />
+      <>
+        <rect
+          x={barStartX}
+          y={curY + 8}
+          width={barWidth}
+          height="14"
+          rx="4"
+          fill={bar.primaryColor}
+          fill-opacity="0.92"
+          className={`fade-${delay}`}
+        />
+        <rect
+          x={barStartX}
+          y={curY + 8}
+          width={barWidth}
+          height="14"
+          rx="4"
+          fill="#ffffff"
+          opacity="0.08"
+          className={`fade-${delay}`}
+        />
+      </>
     );
 
     // Star count
@@ -132,13 +144,13 @@ export function renderProjectConstellation(
               cy={curY + rowBaseHeight + 4}
               r="3"
               fill={langColor}
-              className={`${langColor ? "" : "muted-fill"} fade-${delay}`}
+              className={`$langColor ? "" : "muted-fill"fade-$delay`}
               fill-opacity="0.6"
             />
             <text
               x={dotX + 10}
               y={curY + rowBaseHeight + 7}
-              className={`t muted-fill fade-${delay}`}
+              className={`t muted-fill fade-$delay`}
               font-size="9"
             >
               {escapeXml(truncate(lang, 10))}

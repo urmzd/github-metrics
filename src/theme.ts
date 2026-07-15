@@ -1,21 +1,21 @@
 export const THEME = {
-  bg: "#0d1117",
-  cardBg: "#161b22",
-  border: "#30363d",
-  link: "#58a6ff",
-  text: "#c9d1d9",
-  secondary: "#8b949e",
-  muted: "#6e7681",
+  bg: "#090d14",
+  cardBg: "#111827",
+  border: "#2f3b4f",
+  link: "#45b3ff",
+  text: "#eef6ff",
+  secondary: "#b7c3d7",
+  muted: "#7f8ca3",
 } as const;
 
 export const THEME_LIGHT = {
-  bg: "#ffffff",
-  cardBg: "#f6f8fa",
-  border: "#d0d7de",
-  link: "#0969da",
-  text: "#1f2328",
-  secondary: "#656d76",
-  muted: "#656d76",
+  bg: "#f7f9fc",
+  cardBg: "#ffffff",
+  border: "#c9d5e4",
+  link: "#075fce",
+  text: "#172033",
+  secondary: "#4b5870",
+  muted: "#66738a",
 } as const;
 
 export const FONT =
@@ -25,19 +25,19 @@ export const LAYOUT = {
   width: 808,
   padX: 24,
   padY: 24,
-  sectionGap: 40,
+  sectionGap: 22,
   barHeight: 18,
   barRowHeight: 48,
   barMaxWidth: 700,
 } as const;
 
 export const BAR_COLORS = [
-  "#58a6ff",
-  "#3fb950",
-  "#d29922",
-  "#f85149",
-  "#bc8cff",
-  "#39d2c0",
-  "#db61a2",
-  "#79c0ff",
+  "#45b3ff",
+  "#45d483",
+  "#f6b342",
+  "#ff6b5f",
+  "#a88cff",
+  "#2dd4bf",
+  "#ef6fb2",
+  "#8bd3ff",
 ] as const;

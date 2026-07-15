@@ -12,6 +12,7 @@ TypeScript/Node.js GitHub Action using JSX for SVG string rendering (no React â€
 |------|------|
 | `src/index.ts` | Main action entry point |
 | `src/api.ts` | GitHub API interactions + AI (preamble, project classification) |
+| `src/ai-cache.ts` | AI output cache â€” skips model calls when inputs are unchanged |
 | `src/metrics.ts` | Metric calculation (velocity, rhythm, constellation, sections) |
 | `src/templates.ts` | README template generation (classic, modern, minimal, ecosystem) |
 | `src/config.ts` | Configuration parsing (`github-insights.yml`) |

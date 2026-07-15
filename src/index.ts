@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import * as core from "@actions/core";
 import * as exec from "@actions/exec";
+import { AICache, hashAIInputs } from "./ai-cache.js";
 import {
   fetchAIPreamble,
   fetchAllRepoData,
@@ -28,7 +29,7 @@ import {
   extractFirstName,
   getTemplate,
 } from "./templates.js";
-import type { TemplateName } from "./types.js";
+import type { RepoClassificationOutput, TemplateName } from "./types.js";
 
 async function run(): Promise<void> {
   try {
@@ -51,6 +52,12 @@ async function run(): Promise<void> {
       core.getInput("readme-path") || (process.env.CI ? "README.md" : "none");
     const userConfig = loadUserConfig(configPath);
     const prompts = resolvePrompts(userConfig.ai);
+    const cacheEnabled =
+      (core.getInput("cache") || "true") === "true" &&
+      userConfig.cache !== false;
+    const aiCache = cacheEnabled
+      ? AICache.load(`${outputDir}/.ai-cache.json`)
+      : undefined;
 
     // Template and sections from action inputs or config
     const templateName: TemplateName =
@@ -109,21 +116,36 @@ async function run(): Promise<void> {
       contributionData,
     );
 
-    let aiClassifications: Awaited<
-      ReturnType<typeof fetchProjectClassifications>
-    > = [];
-    try {
-      aiClassifications = await fetchProjectClassifications(
-        token,
-        classificationInputs,
-        prompts.classification,
-      );
-    } catch (err) {
-      const msg =
-        err instanceof InsightsError
-          ? `${err.message} [${err.code}]`
-          : String(err);
-      core.warning(`AI classification unavailable (${msg}), using heuristics`);
+    const classificationHash = hashAIInputs(
+      "classifications",
+      classificationInputs,
+      prompts.classification,
+    );
+    let aiClassifications: RepoClassificationOutput[] = [];
+    const cachedClassifications = aiCache?.get<RepoClassificationOutput[]>(
+      "classifications",
+      classificationHash,
+    );
+    if (cachedClassifications) {
+      aiClassifications = cachedClassifications;
+      core.info("Classification inputs unchanged, using cached AI results");
+    } else {
+      try {
+        aiClassifications = await fetchProjectClassifications(
+          token,
+          classificationInputs,
+          prompts.classification,
+        );
+        aiCache?.set("classifications", classificationHash, aiClassifications);
+      } catch (err) {
+        const msg =
+          err instanceof InsightsError
+            ? `${err.message} [${err.code}]`
+            : String(err);
+        core.warning(
+          `AI classification unavailable (${msg}), using heuristics`,
+        );
+      }
     }
     core.info(
       `Project classifications: ${aiClassifications.length} AI-classified (${repos.length - aiClassifications.length} heuristic fallback)`,
@@ -205,26 +227,38 @@ async function run(): Promise<void> {
       let preamble = loadPreamble(userConfig.preamble);
 
       if (!preamble) {
-        core.info("No PREAMBLE.md found, generating with AI...");
-        try {
-          preamble = await fetchAIPreamble(
-            token,
-            {
-              username,
-              profile: userProfile,
-              userConfig,
-              languages: report.languages,
-              spotlightProjects: report.spotlightProjects,
-              complexProjects: report.allProjects,
-            },
-            prompts.preamble,
-          );
-        } catch (err) {
-          const msg =
-            err instanceof InsightsError
-              ? `${err.message} [${err.code}]`
-              : String(err);
-          core.warning(`AI preamble unavailable (${msg}), skipping`);
+        const preambleContext = {
+          username,
+          profile: userProfile,
+          userConfig,
+          languages: report.languages,
+          spotlightProjects: report.spotlightProjects,
+          complexProjects: report.allProjects,
+        };
+        const preambleHash = hashAIInputs(
+          "preamble",
+          preambleContext,
+          prompts.preamble,
+        );
+        preamble = aiCache?.get<string>("preamble", preambleHash);
+        if (preamble) {
+          core.info("Preamble inputs unchanged, using cached AI preamble");
+        } else {
+          core.info("No PREAMBLE.md found, generating with AI...");
+          try {
+            preamble = await fetchAIPreamble(
+              token,
+              preambleContext,
+              prompts.preamble,
+            );
+            aiCache?.set("preamble", preambleHash, preamble);
+          } catch (err) {
+            const msg =
+              err instanceof InsightsError
+                ? `${err.message} [${err.code}]`
+                : String(err);
+            core.warning(`AI preamble unavailable (${msg}), skipping`);
+          }
         }
       }
 
@@ -340,6 +374,9 @@ async function run(): Promise<void> {
         core.info(`Wrote ${previewPath} (preview)`);
       }
     }
+
+    // Persist AI outputs so unchanged inputs skip model calls next run.
+    aiCache?.save();
 
     // ── Commit + Push ─────────────────────────────────────────────────────
     if (commitPush) {
