@@ -11,22 +11,25 @@ export function StyleDefs({ mode }: { mode: ThemeMode }): string {
       <style>
         {`
   .t { font-family: ${FONT}; font-variant-numeric: tabular-lining; }
-  .t-h { font-size: 14px; fill: ${t.text}; letter-spacing: 2px; font-weight: 600; }
-  .t-sub { font-size: 11px; fill: ${t.muted}; }
+  .t-h { font-size: 15px; fill: ${t.text}; letter-spacing: 1.6px; font-weight: 800; }
+  .t-sub { font-size: 11px; fill: ${t.secondary}; }
   .t-label { font-size: 12px; fill: ${t.secondary}; }
-  .t-value { font-size: 11px; fill: ${t.muted}; }
-  .t-subhdr { font-size: 11px; fill: ${t.secondary}; letter-spacing: 1px; font-weight: 600; }
-  .t-stat-label { font-size: 10px; fill: ${t.secondary}; font-weight: 600; }
-  .t-stat-value { font-size: 22px; font-weight: 700; }
+  .t-value { font-size: 11px; fill: ${t.secondary}; }
+  .t-subhdr { font-size: 11px; fill: ${t.secondary}; letter-spacing: 1px; font-weight: 800; }
+  .t-stat-label { font-size: 10px; fill: ${t.secondary}; font-weight: 800; letter-spacing: 0.8px; }
+  .t-stat-value { font-size: 24px; font-weight: 800; }
   .t-card-title { font-size: 12px; fill: ${t.link}; font-weight: 700; }
   .t-card-detail { font-size: 11px; fill: ${t.secondary}; }
   .t-pill { font-size: 11px; font-weight: 600; }
   .t-bullet { font-size: 12px; fill: ${t.text}; }
   .bg-fill { fill: ${t.bg}; }
   .card-fill { fill: ${t.cardBg}; }
+  .surface-fill { fill: ${t.cardBg}; }
+  .surface-stroke { stroke: ${t.border}; }
   .border-stroke { stroke: ${t.border}; }
   .muted-fill { fill: ${t.muted}; }
   .secondary-fill { fill: ${t.secondary}; }
+  .soft-line { stroke: ${t.border}; stroke-opacity: 0.45; }
 
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }

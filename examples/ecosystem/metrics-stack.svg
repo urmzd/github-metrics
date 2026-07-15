@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="808" height="618" viewBox="0 0 808 618"><defs><style>
+  .t { font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif; font-variant-numeric: tabular-lining; }
+  .t-h { font-size: 15px; fill: #eef6ff; letter-spacing: 1.6px; font-weight: 800; }
+  .t-sub { font-size: 11px; fill: #b7c3d7; }
+  .t-label { font-size: 12px; fill: #b7c3d7; }
+  .t-value { font-size: 11px; fill: #b7c3d7; }
+  .t-subhdr { font-size: 11px; fill: #b7c3d7; letter-spacing: 1px; font-weight: 800; }
+  .t-stat-label { font-size: 10px; fill: #b7c3d7; font-weight: 800; letter-spacing: 0.8px; }
+  .t-stat-value { font-size: 24px; font-weight: 800; }
+  .t-card-title { font-size: 12px; fill: #45b3ff; font-weight: 700; }
+  .t-card-detail { font-size: 11px; fill: #b7c3d7; }
+  .t-pill { font-size: 11px; font-weight: 600; }
+  .t-bullet { font-size: 12px; fill: #eef6ff; }
+  .bg-fill { fill: #090d14; }
+  .card-fill { fill: #111827; }
+  .surface-fill { fill: #111827; }
+  .surface-stroke { stroke: #2f3b4f; }
+  .border-stroke { stroke: #2f3b4f; }
+  .muted-fill { fill: #7f8ca3; }
+  .secondary-fill { fill: #b7c3d7; }
+  .soft-line { stroke: #2f3b4f; stroke-opacity: 0.45; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scaleIn {
+    from { transform: scale(0); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  @keyframes drawPath {
+    from { stroke-dashoffset: var(--path-length); }
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes radarReveal {
+    from { transform: scale(0); opacity: 0; }
+    to { transform: scale(1); opacity: 0.6; }
+  }
+  .fade-1 { animation: fadeIn 0.6s ease-out 0.1s both; }
+  .fade-2 { animation: fadeIn 0.6s ease-out 0.25s both; }
+  .fade-3 { animation: fadeIn 0.6s ease-out 0.4s both; }
+  .fade-4 { animation: fadeIn 0.6s ease-out 0.55s both; }
+  .fade-5 { animation: fadeIn 0.6s ease-out 0.7s both; }
+  .fade-6 { animation: fadeIn 0.6s ease-out 0.85s both; }
+</style></defs><rect width="808" height="618" rx="12" class="bg-fill"/><path d="M 548 0 L 808 0 L 808 618 L 388 618 Z" fill="#45b3ff" opacity="0.05"/><path d="M 0 338 L 310 618 L 0 618 Z" fill="#2dd4bf" opacity="0.05"/><rect x="12" y="12" width="784" height="594" rx="14" class="surface-fill surface-stroke" stroke-width="1" opacity="0.92"/><rect x="12" y="12" width="4" height="594" rx="2" fill="#45b3ff"/><text x="24" y="40" class="t t-h">TECH STACK</text><text x="24" y="56" class="t t-sub">Projects arranged by abstraction layer</text><rect x="24" y="66" width="760" height="124" rx="8" fill="#bc8cff" fill-opacity="0.08" class="fade-1"/><text x="40" y="102" class="t t-subhdr fade-1" fill-opacity="0.9">AI &amp; RESEARCH</text><rect x="40" y="114" width="176" height="52" rx="6" class="card-fill fade-1"/><text x="50" y="134" class="t t-card-title fade-1">glassbox-lm</text><text x="206" y="134" class="t t-value fade-1" text-anchor="end" font-size="9">★ 0</text><circle cx="54" cy="152" r="3" fill="#3572A5" fill-opacity="0.8" class="fade-1"/><text x="62" y="155" class="t muted-fill fade-1" font-size="9">Python</text><rect x="24" y="198" width="760" height="124" rx="8" fill="#d29922" fill-opacity="0.08" class="fade-2"/><text x="40" y="234" class="t t-subhdr fade-2" fill-opacity="0.9">APPLICATIONS</text><rect x="40" y="246" width="176" height="52" rx="6" class="card-fill fade-2"/><text x="50" y="266" class="t t-card-title fade-2">urmzd.com</text><text x="206" y="266" class="t t-value fade-2" text-anchor="end" font-size="9">★ 1</text><circle cx="54" cy="284" r="3" fill="#3178c6" fill-opacity="0.8" class="fade-2"/><text x="62" y="287" class="t muted-fill fade-2" font-size="9">TypeScript</text><rect x="228" y="246" width="176" height="52" rx="6" class="card-fill fade-2"/><text x="238" y="266" class="t t-card-title fade-2">languide</text><text x="394" y="266" class="t t-value fade-2" text-anchor="end" font-size="9">★ 0</text><circle cx="242" cy="284" r="3" fill="#8b949e" fill-opacity="0.8" class="fade-2"/><text x="250" y="287" class="t muted-fill fade-2" font-size="9">Other</text><rect x="24" y="330" width="760" height="124" rx="8" fill="#58a6ff" fill-opacity="0.08" class="fade-3"/><text x="40" y="366" class="t t-subhdr fade-3" fill-opacity="0.9">LIBRARIES &amp; SDKS</text><rect x="40" y="378" width="176" height="52" rx="6" class="card-fill fade-3"/><text x="50" y="398" class="t t-card-title fade-3">linear-gp</text><text x="206" y="398" class="t t-value fade-3" text-anchor="end" font-size="9">★ 2</text><circle cx="54" cy="416" r="3" fill="#dea584" fill-opacity="0.8" class="fade-3"/><text x="62" y="419" class="t muted-fill fade-3" font-size="9">Rust</text><rect x="228" y="378" width="176" height="52" rx="6" class="card-fill fade-3"/><text x="238" y="398" class="t t-card-title fade-3">saige</text><text x="394" y="398" class="t t-value fade-3" text-anchor="end" font-size="9">★ 4</text><circle cx="242" cy="416" r="3" fill="#00ADD8" fill-opacity="0.8" class="fade-3"/><text x="250" y="419" class="t muted-fill fade-3" font-size="9">Go</text><rect x="416" y="378" width="176" height="52" rx="6" class="card-fill fade-3"/><text x="426" y="398" class="t t-card-title fade-3">streamsafe</text><text x="582" y="398" class="t t-value fade-3" text-anchor="end" font-size="9">★ 0</text><circle cx="430" cy="416" r="3" fill="#dea584" fill-opacity="0.8" class="fade-3"/><text x="438" y="419" class="t muted-fill fade-3" font-size="9">Rust</text><rect x="24" y="462" width="760" height="124" rx="8" fill="#3fb950" fill-opacity="0.08" class="fade-4"/><text x="40" y="498" class="t t-subhdr fade-4" fill-opacity="0.9">INFRASTRUCTURE &amp; DEVOPS</text><rect x="40" y="510" width="176" height="52" rx="6" class="card-fill fade-4"/><text x="50" y="530" class="t t-card-title fade-4">incipit</text><text x="206" y="530" class="t t-value fade-4" text-anchor="end" font-size="9">★ 12</text><circle cx="54" cy="548" r="3" fill="#00ADD8" fill-opacity="0.8" class="fade-4"/><text x="62" y="551" class="t muted-fill fade-4" font-size="9">Go</text><rect x="228" y="510" width="176" height="52" rx="6" class="card-fill fade-4"/><text x="238" y="530" class="t t-card-title fade-4">zigbee-skill</text><text x="394" y="530" class="t t-value fade-4" text-anchor="end" font-size="9">★ 0</text><circle cx="242" cy="548" r="3" fill="#00ADD8" fill-opacity="0.8" class="fade-4"/><text x="250" y="551" class="t muted-fill fade-4" font-size="9">Go</text><rect x="416" y="510" width="176" height="52" rx="6" class="card-fill fade-4"/><text x="426" y="530" class="t t-card-title fade-4">generative-artifact…</text><text x="582" y="530" class="t t-value fade-4" text-anchor="end" font-size="9">★ 1</text><circle cx="430" cy="548" r="3" fill="#dea584" fill-opacity="0.8" class="fade-4"/><text x="438" y="551" class="t muted-fill fade-4" font-size="9">Rust</text></svg>

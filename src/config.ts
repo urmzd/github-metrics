@@ -107,6 +107,7 @@ export const UserConfigSchema = z
     exclude_archived: z.boolean().optional(),
     fail_fast: z.boolean().optional(),
     export_json: z.boolean().optional(),
+    cache: z.boolean().optional(),
     constellation_group_by: lenientConstellationGroupBy,
     ai: aiConfigSchema,
   })
@@ -132,6 +133,7 @@ export type UserConfig = {
   exclude_archived?: boolean;
   fail_fast?: boolean;
   export_json?: boolean;
+  cache?: boolean;
   constellation_group_by?: (typeof VALID_CONSTELLATION_GROUP_BY)[number];
   ai?: AIConfig;
 };

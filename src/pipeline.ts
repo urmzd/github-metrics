@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
+import { AICache, hashAIInputs } from "./ai-cache.js";
 import {
   fetchAIPreamble,
   fetchAllRepoData,
@@ -13,6 +14,11 @@ import { generateFullSvg, wrapSectionSvg } from "./components/full-svg.js";
 import { renderSection } from "./components/section.js";
 import { loadUserConfig, resolveTemplateSections } from "./config.js";
 import { InsightsError } from "./errors.js";
+import {
+  buildExamplesGallery,
+  buildExamplesHtmlGallery,
+  EXAMPLE_TEMPLATE_PRESETS,
+} from "./examples.js";
 import {
   buildClassificationInputs,
   buildInsightsReport,
@@ -27,7 +33,11 @@ import {
   extractFirstName,
   getTemplate,
 } from "./templates.js";
-import type { TemplateName } from "./types.js";
+import type {
+  RepoClassificationOutput,
+  SectionDef,
+  TemplateName,
+} from "./types.js";
 
 // ── Pipeline types ──────────────────────────────────────────────────────────
 
@@ -62,6 +72,8 @@ export interface PipelineConfig {
   requestedSections: string[];
   failFast: boolean;
   exportJson: boolean;
+  cache?: boolean;
+  examplesDir?: string;
 }
 
 // ── Git helper ──────────────────────────────────────────────────────────────
@@ -101,11 +113,6 @@ export async function runPipeline(
     templateName,
     requestedSections,
   );
-  const svgSectionsNeeded = new Set(
-    resolvedSections.filter((s) =>
-      (SVG_SECTION_KEYS as readonly string[]).includes(s),
-    ),
-  );
 
   const prompts = resolvePrompts(userConfig.ai);
 
@@ -132,6 +139,10 @@ export async function runPipeline(
   // ── Classify ──────────────────────────────────────────────────────────────
   const failFast = config.failFast || userConfig.fail_fast || false;
   const exportJson = config.exportJson || userConfig.export_json || false;
+  const cacheEnabled = config.cache !== false && userConfig.cache !== false;
+  const aiCache = cacheEnabled
+    ? AICache.load(`${config.outputDir}/.ai-cache.json`)
+    : undefined;
 
   cb.onPhaseStart("classify", "Classifying projects");
   const classificationInputs = buildClassificationInputs(
@@ -139,27 +150,40 @@ export async function runPipeline(
     contributionData,
   );
 
-  let aiClassifications: Awaited<
-    ReturnType<typeof fetchProjectClassifications>
-  > = [];
-  try {
-    aiClassifications = await fetchProjectClassifications(
-      config.token,
-      classificationInputs,
-      prompts.classification,
-    );
-  } catch (err) {
-    if (failFast) throw err;
-    const msg =
-      err instanceof InsightsError
-        ? `${err.message} [${err.code}]`
-        : String(err);
-    cb.onProgress(`AI classification unavailable (${msg}), using heuristics`);
+  const classificationHash = hashAIInputs(
+    "classifications",
+    classificationInputs,
+    prompts.classification,
+  );
+  let aiClassifications: RepoClassificationOutput[] = [];
+  const cachedClassifications = aiCache?.get<RepoClassificationOutput[]>(
+    "classifications",
+    classificationHash,
+  );
+  if (cachedClassifications) {
+    aiClassifications = cachedClassifications;
+    cb.onProgress("Classification inputs unchanged, using cached AI results");
+  } else {
+    try {
+      aiClassifications = await fetchProjectClassifications(
+        config.token,
+        classificationInputs,
+        prompts.classification,
+      );
+      aiCache?.set("classifications", classificationHash, aiClassifications);
+    } catch (err) {
+      if (failFast) throw err;
+      const msg =
+        err instanceof InsightsError
+          ? `${err.message} [${err.code}]`
+          : String(err);
+      cb.onProgress(`AI classification unavailable (${msg}), using heuristics`);
+    }
   }
 
   cb.onPhaseComplete(
     "classify",
-    `${aiClassifications.length} AI-classified, ${repos.length - aiClassifications.length} heuristic`,
+    `${aiClassifications.length} AI-classified${cachedClassifications ? " (cached)" : ""}, ${repos.length - aiClassifications.length} heuristic`,
   );
 
   // ── Transform ─────────────────────────────────────────────────────────────
@@ -187,56 +211,74 @@ export async function runPipeline(
     constellationGroupBy: report.constellationGroupBy,
   });
 
-  let activeSections = sectionDefs.filter((s) => s.renderBody);
-  if (svgSectionsNeeded.size > 0) {
+  const getActiveSectionsFor = (sections: readonly string[]): SectionDef[] => {
+    const svgSectionsNeeded = new Set(
+      sections.filter((s) =>
+        (SVG_SECTION_KEYS as readonly string[]).includes(s),
+      ),
+    );
+    let sectionsForPreset = sectionDefs.filter((s) => s.renderBody);
+    if (svgSectionsNeeded.size === 0) return sectionsForPreset;
+
     const allowedFilenames = new Set(
       [...svgSectionsNeeded].map((key) => SECTION_KEYS[key]).filter(Boolean),
     );
-    activeSections = activeSections.filter((s) =>
+    sectionsForPreset = sectionsForPreset.filter((s) =>
       allowedFilenames.has(s.filename),
     );
-  }
+    return sectionsForPreset;
+  };
+
+  const activeSections = getActiveSectionsFor(resolvedSections);
   cb.onPhaseComplete("transform", `${activeSections.length} sections`);
+
+  const writeSvgSet = (
+    targetDir: string,
+    sections: SectionDef[],
+    options: { includeJson?: boolean; logFiles?: boolean } = {},
+  ): void => {
+    mkdirSync(targetDir, { recursive: true });
+
+    for (const section of sections) {
+      if (!section.renderBody) continue;
+      const { svg, height } = renderSection(
+        section.title,
+        section.subtitle,
+        section.renderBody,
+      );
+      writeFileSync(
+        `${targetDir}/${section.filename}`,
+        wrapSectionSvg(svg, height, "dark"),
+      );
+      const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
+      writeFileSync(
+        `${targetDir}/${lightFilename}`,
+        wrapSectionSvg(svg, height, "light"),
+      );
+      if (options.includeJson && section.data !== undefined) {
+        const jsonFilename = section.filename.replace(/\.svg$/, ".json");
+        writeFileSync(
+          `${targetDir}/${jsonFilename}`,
+          JSON.stringify(section.data, null, 2),
+        );
+        if (options.logFiles) cb.onProgress(`Wrote ${jsonFilename}`);
+      }
+      if (options.logFiles) cb.onProgress(`Wrote ${section.filename} (+light)`);
+    }
+
+    writeFileSync(`${targetDir}/index.svg`, generateFullSvg(sections, "dark"));
+    writeFileSync(
+      `${targetDir}/index-light.svg`,
+      generateFullSvg(sections, "light"),
+    );
+  };
 
   // ── Render SVGs ───────────────────────────────────────────────────────────
   cb.onPhaseStart("render-svg", "Rendering SVGs");
-  mkdirSync(config.outputDir, { recursive: true });
-
-  for (const section of activeSections) {
-    if (!section.renderBody) continue;
-    const { svg, height } = renderSection(
-      section.title,
-      section.subtitle,
-      section.renderBody,
-    );
-    writeFileSync(
-      `${config.outputDir}/${section.filename}`,
-      wrapSectionSvg(svg, height, "dark"),
-    );
-    const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
-    writeFileSync(
-      `${config.outputDir}/${lightFilename}`,
-      wrapSectionSvg(svg, height, "light"),
-    );
-    if (exportJson && section.data !== undefined) {
-      const jsonFilename = section.filename.replace(/\.svg$/, ".json");
-      writeFileSync(
-        `${config.outputDir}/${jsonFilename}`,
-        JSON.stringify(section.data, null, 2),
-      );
-      cb.onProgress(`Wrote ${jsonFilename}`);
-    }
-    cb.onProgress(`Wrote ${section.filename} (+light)`);
-  }
-
-  writeFileSync(
-    `${config.outputDir}/index.svg`,
-    generateFullSvg(activeSections, "dark"),
-  );
-  writeFileSync(
-    `${config.outputDir}/index-light.svg`,
-    generateFullSvg(activeSections, "light"),
-  );
+  writeSvgSet(config.outputDir, activeSections, {
+    includeJson: exportJson,
+    logFiles: true,
+  });
   cb.onPhaseComplete(
     "render-svg",
     `${activeSections.length * 2 + 2} SVG files`,
@@ -250,56 +292,79 @@ export async function runPipeline(
   }
   cb.onPhaseComplete("write-files", `${filesWritten.length} files`);
 
-  // ── README ────────────────────────────────────────────────────────────────
-  if (config.readmePath && config.readmePath !== "none") {
-    cb.onPhaseStart("generate-readme", "Generating README");
-    const svgDir =
-      relative(dirname(config.readmePath), config.outputDir) || ".";
+  // ── README + local examples ──────────────────────────────────────────────
+  const shouldWriteReadme = Boolean(
+    config.readmePath && config.readmePath !== "none",
+  );
+  const shouldWriteExamples = Boolean(
+    !process.env.CI && config.examplesDir && config.examplesDir !== "none",
+  );
+
+  if (shouldWriteReadme || shouldWriteExamples) {
+    cb.onPhaseStart(
+      "generate-readme",
+      shouldWriteReadme ? "Generating README" : "Generating examples",
+    );
 
     const socialBadges = buildSocialBadges(userProfile);
-
     let preamble = loadPreamble(userConfig.preamble);
     if (!preamble) {
-      cb.onProgress("Generating preamble with AI...");
-      try {
-        preamble = await fetchAIPreamble(
-          config.token,
-          {
-            username: config.username,
-            profile: userProfile,
-            userConfig,
-            languages: report.languages,
-            spotlightProjects: report.spotlightProjects,
-            complexProjects: report.allProjects,
-          },
-          prompts.preamble,
-        );
-      } catch (err) {
-        if (failFast) throw err;
-        const msg =
-          err instanceof InsightsError
-            ? `${err.message} [${err.code}]`
-            : String(err);
-        cb.onProgress(`AI preamble unavailable (${msg}), skipping`);
+      const preambleContext = {
+        username: config.username,
+        profile: userProfile,
+        userConfig,
+        languages: report.languages,
+        spotlightProjects: report.spotlightProjects,
+        complexProjects: report.allProjects,
+      };
+      const preambleHash = hashAIInputs(
+        "preamble",
+        preambleContext,
+        prompts.preamble,
+      );
+      preamble = aiCache?.get<string>("preamble", preambleHash);
+      if (preamble) {
+        cb.onProgress("Preamble inputs unchanged, using cached AI preamble");
+      } else {
+        cb.onProgress("Generating preamble with AI...");
+        try {
+          preamble = await fetchAIPreamble(
+            config.token,
+            preambleContext,
+            prompts.preamble,
+          );
+          aiCache?.set("preamble", preambleHash, preamble);
+        } catch (err) {
+          if (failFast) throw err;
+          const msg =
+            err instanceof InsightsError
+              ? `${err.message} [${err.code}]`
+              : String(err);
+          cb.onProgress(`AI preamble unavailable (${msg}), using fallback`);
+        }
       }
     }
+    preamble ||= userConfig.bio || userProfile.bio || "";
 
-    const svgs = activeSections.map((s) => ({
-      label: s.title,
-      path: `${svgDir}/${s.filename}`,
-    }));
+    const buildSvgRefs = (sections: SectionDef[], svgDir: string) => {
+      const svgs = sections.map((s) => ({
+        label: s.title,
+        path: `${svgDir}/${s.filename}`,
+      }));
 
-    const sectionSvgs: Record<string, string> = {};
-    const sectionSvgsLight: Record<string, string> = {};
-    for (const [key, filename] of Object.entries(SECTION_KEYS)) {
-      if (activeSections.some((s) => s.filename === filename)) {
-        sectionSvgs[key] = `${svgDir}/${filename}`;
-        sectionSvgsLight[key] =
-          `${svgDir}/${filename.replace(/\.svg$/, "-light.svg")}`;
+      const sectionSvgs: Record<string, string> = {};
+      const sectionSvgsLight: Record<string, string> = {};
+      for (const [key, filename] of Object.entries(SECTION_KEYS)) {
+        if (sections.some((s) => s.filename === filename)) {
+          sectionSvgs[key] = `${svgDir}/${filename}`;
+          sectionSvgsLight[key] =
+            `${svgDir}/${filename.replace(/\.svg$/, "-light.svg")}`;
+        }
       }
-    }
 
-    const template = getTemplate(templateName);
+      return { svgs, sectionSvgs, sectionSvgsLight };
+    };
+
     const contextBase = {
       username: config.username,
       name: displayName,
@@ -308,7 +373,6 @@ export async function runPipeline(
       title: userConfig.title,
       bio: userConfig.bio,
       preamble,
-      templateName,
       profile: userProfile,
       activeProjects: report.activeProjects,
       maintainedProjects: report.maintainedProjects,
@@ -324,67 +388,87 @@ export async function runPipeline(
       contributionData: report.contributionData,
       socialBadges,
       spotlightProjects: report.spotlightProjects,
-      resolvedSections,
     };
 
-    const readme = template({
-      ...contextBase,
-      svgs,
-      sectionSvgs,
-      sectionSvgsLight,
-      svgDir,
-    });
-    writeFileSync(config.readmePath, readme);
-
-    // Local template preview
-    if (!process.env.CI) {
-      const tplDir = "examples/default";
-      mkdirSync(tplDir, { recursive: true });
-
-      copyFileSync(`${config.outputDir}/index.svg`, `${tplDir}/index.svg`);
-      copyFileSync(
-        `${config.outputDir}/index-light.svg`,
-        `${tplDir}/index-light.svg`,
-      );
-      for (const section of activeSections) {
-        copyFileSync(
-          `${config.outputDir}/${section.filename}`,
-          `${tplDir}/${section.filename}`,
-        );
-        const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
-        copyFileSync(
-          `${config.outputDir}/${lightFilename}`,
-          `${tplDir}/${lightFilename}`,
-        );
-      }
-
-      const previewSvgs = activeSections.map((s) => ({
-        label: s.title,
-        path: `./${s.filename}`,
-      }));
-      const previewSectionSvgs: Record<string, string> = {};
-      const previewSectionSvgsLight: Record<string, string> = {};
-      for (const [key, filename] of Object.entries(SECTION_KEYS)) {
-        if (activeSections.some((s) => s.filename === filename)) {
-          previewSectionSvgs[key] = `./${filename}`;
-          previewSectionSvgsLight[key] =
-            `./${filename.replace(/\.svg$/, "-light.svg")}`;
-        }
-      }
-
-      const previewReadme = template({
+    const renderReadme = (
+      readmeTemplateName: TemplateName,
+      sections: SectionDef[],
+      readmeSections: ReturnType<typeof resolveTemplateSections>,
+      svgDir: string,
+    ): string => {
+      const template = getTemplate(readmeTemplateName);
+      const svgRefs = buildSvgRefs(sections, svgDir);
+      return template({
         ...contextBase,
-        svgs: previewSvgs,
-        sectionSvgs: previewSectionSvgs,
-        sectionSvgsLight: previewSectionSvgsLight,
-        svgDir: ".",
+        ...svgRefs,
+        templateName: readmeTemplateName,
+        resolvedSections: readmeSections,
+        svgDir,
       });
-      writeFileSync(`${tplDir}/README.md`, previewReadme);
-      cb.onProgress(`Preview at ${tplDir}/README.md`);
+    };
+
+    if (shouldWriteReadme) {
+      const svgDir =
+        relative(dirname(config.readmePath), config.outputDir) || ".";
+      const readme = renderReadme(
+        templateName,
+        activeSections,
+        resolvedSections,
+        svgDir,
+      );
+      writeFileSync(config.readmePath, readme);
     }
 
-    cb.onPhaseComplete("generate-readme", config.readmePath);
+    if (shouldWriteExamples && config.examplesDir) {
+      const examplePresets = EXAMPLE_TEMPLATE_PRESETS.map((presetName) => {
+        const presetSections = resolveTemplateSections(presetName);
+        const presetActiveSections = getActiveSectionsFor(presetSections);
+        const presetDir = `${config.examplesDir}/${presetName}`;
+
+        writeSvgSet(presetDir, presetActiveSections);
+        writeFileSync(
+          `${presetDir}/README.md`,
+          renderReadme(presetName, presetActiveSections, presetSections, "."),
+        );
+        cb.onProgress(`Preview at ${presetDir}/README.md`);
+
+        return { name: presetName, sections: presetSections };
+      });
+
+      writeFileSync(
+        `${config.examplesDir}/README.md`,
+        buildExamplesGallery({
+          username: config.username,
+          configPath: config.configPath,
+          presets: examplePresets,
+        }),
+      );
+      writeFileSync(
+        `${config.examplesDir}/index.html`,
+        buildExamplesHtmlGallery({
+          username: config.username,
+          configPath: config.configPath,
+          presets: examplePresets,
+        }),
+      );
+      cb.onProgress(`Gallery at ${config.examplesDir}/README.md`);
+      cb.onProgress(`Browser gallery at ${config.examplesDir}/index.html`);
+    }
+
+    const outputs = [
+      ...(shouldWriteReadme ? [config.readmePath] : []),
+      ...(shouldWriteExamples && config.examplesDir
+        ? [
+            `${config.examplesDir}/README.md`,
+            `${config.examplesDir}/index.html`,
+          ]
+        : []),
+    ];
+    cb.onPhaseComplete("generate-readme", outputs.join(", "));
   }
+
+  // Persist AI outputs so unchanged inputs skip model calls next run.
+  aiCache?.save();
 
   // ── Commit + Push ─────────────────────────────────────────────────────────
   if (config.commitPush) {

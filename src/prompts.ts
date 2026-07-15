@@ -31,13 +31,13 @@ function loadDefault(filename: string): string {
 
 const DEFAULTS: ResolvedPrompts = {
   preamble: {
-    model: "gpt-4.1",
+    model: "openai/gpt-4.1",
     temperature: 0.5,
     system: loadDefault("preamble-system.txt"),
     user: loadDefault("preamble-user.txt"),
   },
   classification: {
-    model: "gpt-4.1",
+    model: "openai/gpt-4.1",
     temperature: 0.15,
     system: loadDefault("classification-system.txt"),
     user: loadDefault("classification-user.txt"),

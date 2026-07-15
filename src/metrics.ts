@@ -746,13 +746,10 @@ export const computeStackLayout = (
   >();
 
   for (const project of projects) {
-    const category =
-      project.category ||
-      (repoMap.has(project.name)
-        ? heuristicCategory(repoMap.get(project.name)!)
-        : "Other");
-    const layerDef = STACK_LAYER_MAP[category] || STACK_LAYER_MAP["Other"];
     const repo = repoMap.get(project.name);
+    const category =
+      project.category || (repo ? heuristicCategory(repo) : "Other");
+    const layerDef = STACK_LAYER_MAP[category] || STACK_LAYER_MAP.Other;
 
     const stackProject: StackProject = {
       name: project.name,
@@ -763,10 +760,12 @@ export const computeStackLayout = (
       complexity: repo ? complexityScore(repo) : 0,
     };
 
-    if (!layerProjects.has(layerDef.rank)) {
-      layerProjects.set(layerDef.rank, { layer: layerDef, projects: [] });
+    let layer = layerProjects.get(layerDef.rank);
+    if (!layer) {
+      layer = { layer: layerDef, projects: [] };
+      layerProjects.set(layerDef.rank, layer);
     }
-    layerProjects.get(layerDef.rank)!.projects.push(stackProject);
+    layer.projects.push(stackProject);
   }
 
   // Sort projects within each layer by complexity desc, cap at 4
@@ -810,8 +809,12 @@ export function buildInsightsReport(params: {
     excludeArchived,
   } = params;
 
-  const languages = aggregateLanguages(repos);
-  const complexProjects = getTopProjectsByComplexity(repos);
+  const visibleRepos = excludeArchived
+    ? repos.filter((repo) => !repo.isArchived)
+    : repos;
+
+  const languages = aggregateLanguages(visibleRepos);
+  const complexProjects = getTopProjectsByComplexity(visibleRepos);
   const {
     active: activeProjects,
     maintained: maintainedProjects,
@@ -819,15 +822,15 @@ export function buildInsightsReport(params: {
     archived: archivedProjects,
   } = splitProjectsByRecency(repos, contributionData, aiClassifications);
 
-  const velocity = computeLanguageVelocity(contributionData, repos);
+  const velocity = computeLanguageVelocity(contributionData, visibleRepos);
   const rhythm = computeContributionRhythm(contributionData);
   const constellation = computeConstellationLayout(
     complexProjects,
-    repos,
+    visibleRepos,
     constellationGroupBy,
   );
   const spotlightProjects = computeSpotlightProjects(
-    repos,
+    visibleRepos,
     contributionData,
     aiClassifications,
   );

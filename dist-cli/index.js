@@ -62178,7 +62178,7 @@ __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var ink__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(8518);
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(7306);
 /* harmony import */ var _errors_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(3916);
-/* harmony import */ var _pipeline_js__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(8109);
+/* harmony import */ var _pipeline_js__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(7752);
 /* harmony import */ var _tui_App_js__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(3979);
 var __webpack_async_dependencies__ = __webpack_handle_async_dependencies__([ink__WEBPACK_IMPORTED_MODULE_2__, _tui_App_js__WEBPACK_IMPORTED_MODULE_6__]);
 ([ink__WEBPACK_IMPORTED_MODULE_2__, _tui_App_js__WEBPACK_IMPORTED_MODULE_6__] = __webpack_async_dependencies__.then ? (await __webpack_async_dependencies__)() : __webpack_async_dependencies__);
@@ -62213,10 +62213,13 @@ program
     .option("-t, --token <token>", "GitHub token", process.env.GITHUB_TOKEN)
     .option("-u, --username <username>", "GitHub username", process.env.GITHUB_REPOSITORY_OWNER)
     .option("-o, --output-dir <dir>", "Output directory for SVGs", process.env.OUTPUT_DIR || "assets/insights")
+    .option("--config-file <path>", "Path to github-insights config file", process.env.CONFIG_FILE)
     .option("--readme-path <path>", "README output path", process.env.README_PATH || (process.env.CI ? "README.md" : "none"))
+    .option("--examples-dir <dir>", "Local examples output directory (set to 'none' to skip)", process.env.EXAMPLES_DIR || (process.env.CI ? "none" : "examples"))
     .option("--template <name>", "Template preset", process.env.TEMPLATE || "showcase")
     .option("--sections <list>", "Comma-separated section list")
     .option("--fail-fast", "Exit with an error instead of falling back to heuristics when AI is unavailable", false)
+    .option("--no-cache", "Always call AI models, even when inputs are unchanged since the last run")
     .option("--verbose", "Show TUI progress (default: silent when not a TTY)", process.stdout.isTTY)
     .addOption(new commander__WEBPACK_IMPORTED_MODULE_1__/* .Option */ .c$("--format <format>", "Output format")
     .choices(["json", "human"])
@@ -62241,6 +62244,7 @@ program
         commitMessage: "chore: update metrics",
         commitName: "",
         commitEmail: "",
+        configPath: opts.configFile,
         readmePath: opts.readmePath,
         templateName: opts.template,
         requestedSections: sectionsRaw
@@ -62251,6 +62255,8 @@ program
             : [],
         failFast: opts.failFast,
         exportJson: opts.format === "json",
+        cache: opts.cache,
+        examplesDir: opts.examplesDir,
     };
     if (opts.verbose) {
         (0,ink__WEBPACK_IMPORTED_MODULE_2__/* .render */ .XX)(h(_tui_App_js__WEBPACK_IMPORTED_MODULE_6__/* .App */ .q, { config: config, onExit: (err) => {
@@ -62278,6 +62284,12 @@ program
     (0,node_child_process__WEBPACK_IMPORTED_MODULE_0__.execSync)("npm install -g @urmzd/github-insights@latest", {
         stdio: "inherit",
     });
+});
+program
+    .command("version")
+    .description("Print version")
+    .action(() => {
+    console.log(`github-insights ${version}`);
 });
 program.parse();
 
@@ -76404,6 +76416,7 @@ const UserConfigSchema = object({
     exclude_archived: schemas_boolean().optional(),
     fail_fast: schemas_boolean().optional(),
     export_json: schemas_boolean().optional(),
+    cache: schemas_boolean().optional(),
     constellation_group_by: lenientConstellationGroupBy,
     ai: aiConfigSchema,
 })
@@ -76563,7 +76576,7 @@ function getExitCode(error) {
 
 /***/ }),
 
-/***/ 8109:
+/***/ 7752:
 /***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
 
 
@@ -76578,6 +76591,84 @@ var external_node_child_process_ = __nccwpck_require__(1421);
 var external_node_fs_ = __nccwpck_require__(3024);
 // EXTERNAL MODULE: external "node:path"
 var external_node_path_ = __nccwpck_require__(6760);
+// EXTERNAL MODULE: external "node:crypto"
+var external_node_crypto_ = __nccwpck_require__(7598);
+;// CONCATENATED MODULE: ./src/ai-cache.ts
+
+
+// Bump when AI request/response shapes change so stale entries are discarded.
+const CACHE_VERSION = 1;
+/**
+ * Deterministic JSON serialization: object keys are sorted and
+ * undefined-valued properties are dropped, so the same logical inputs
+ * always hash to the same string regardless of key insertion order.
+ */
+const stableStringify = (value) => {
+    if (value === null || typeof value !== "object") {
+        return JSON.stringify(value) ?? "null";
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((v) => stableStringify(v === undefined ? null : v)).join(",")}]`;
+    }
+    const record = value;
+    const parts = [];
+    for (const key of Object.keys(record).sort()) {
+        if (record[key] === undefined)
+            continue;
+        parts.push(`${JSON.stringify(key)}:${stableStringify(record[key])}`);
+    }
+    return `{${parts.join(",")}}`;
+};
+/** Hash everything that affects an AI call's output: inputs + prompt valves. */
+const hashAIInputs = (kind, inputs, valves) => (0,external_node_crypto_.createHash)("sha256")
+    .update(stableStringify({ v: CACHE_VERSION, kind, inputs, valves }))
+    .digest("hex");
+/**
+ * File-backed cache of AI outputs keyed by an input hash. Stored inside the
+ * output directory so CI runs that commit generated assets also persist the
+ * cache, letting subsequent runs skip model calls when inputs are unchanged.
+ */
+class AICache {
+    path;
+    entries;
+    dirty = false;
+    constructor(path, entries) {
+        this.path = path;
+        this.entries = entries;
+    }
+    static load(path) {
+        try {
+            const parsed = JSON.parse((0,external_node_fs_.readFileSync)(path, "utf8"));
+            if (parsed &&
+                parsed.version === CACHE_VERSION &&
+                parsed.entries &&
+                typeof parsed.entries === "object") {
+                return new AICache(path, parsed.entries);
+            }
+        }
+        catch {
+            // Missing or corrupt cache file — start fresh.
+        }
+        return new AICache(path, {});
+    }
+    get(key, hash) {
+        const entry = this.entries[key];
+        return entry && entry.hash === hash ? entry.value : undefined;
+    }
+    set(key, hash, value) {
+        this.entries[key] = { hash, value };
+        this.dirty = true;
+    }
+    /** Writes the cache file only when entries changed since load. */
+    save() {
+        if (!this.dirty)
+            return;
+        const file = { version: CACHE_VERSION, entries: this.entries };
+        (0,external_node_fs_.writeFileSync)(this.path, `${JSON.stringify(file, null, 2)}\n`);
+        this.dirty = false;
+    }
+}
+
 // EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(3228);
 // EXTERNAL MODULE: ./src/errors.ts
@@ -76595,13 +76686,13 @@ function loadDefault(filename) {
 }
 const DEFAULTS = {
     preamble: {
-        model: "gpt-4.1",
+        model: "openai/gpt-4.1",
         temperature: 0.5,
         system: loadDefault("preamble-system.txt"),
         user: loadDefault("preamble-user.txt"),
     },
     classification: {
-        model: "gpt-4.1",
+        model: "openai/gpt-4.1",
         temperature: 0.15,
         system: loadDefault("classification-system.txt"),
         user: loadDefault("classification-user.txt"),
@@ -77099,42 +77190,42 @@ function Fragment({ children }) {
 
 ;// CONCATENATED MODULE: ./src/theme.ts
 const THEME = {
-    bg: "#0d1117",
-    cardBg: "#161b22",
-    border: "#30363d",
-    link: "#58a6ff",
-    text: "#c9d1d9",
-    secondary: "#8b949e",
-    muted: "#6e7681",
+    bg: "#090d14",
+    cardBg: "#111827",
+    border: "#2f3b4f",
+    link: "#45b3ff",
+    text: "#eef6ff",
+    secondary: "#b7c3d7",
+    muted: "#7f8ca3",
 };
 const THEME_LIGHT = {
-    bg: "#ffffff",
-    cardBg: "#f6f8fa",
-    border: "#d0d7de",
-    link: "#0969da",
-    text: "#1f2328",
-    secondary: "#656d76",
-    muted: "#656d76",
+    bg: "#f7f9fc",
+    cardBg: "#ffffff",
+    border: "#c9d5e4",
+    link: "#075fce",
+    text: "#172033",
+    secondary: "#4b5870",
+    muted: "#66738a",
 };
 const FONT = "-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif";
 const theme_LAYOUT = {
     width: 808,
     padX: 24,
     padY: 24,
-    sectionGap: 40,
+    sectionGap: 22,
     barHeight: 18,
     barRowHeight: 48,
     barMaxWidth: 700,
 };
 const BAR_COLORS = [
-    "#58a6ff",
-    "#3fb950",
-    "#d29922",
-    "#f85149",
-    "#bc8cff",
-    "#39d2c0",
-    "#db61a2",
-    "#79c0ff",
+    "#45b3ff",
+    "#45d483",
+    "#f6b342",
+    "#ff6b5f",
+    "#a88cff",
+    "#2dd4bf",
+    "#ef6fb2",
+    "#8bd3ff",
 ];
 
 ;// CONCATENATED MODULE: ./src/svg-utils.ts
@@ -77214,22 +77305,25 @@ function StyleDefs({ mode }) {
     return (jsx_factory_h("defs", null,
         jsx_factory_h("style", null, `
   .t { font-family: ${FONT}; font-variant-numeric: tabular-lining; }
-  .t-h { font-size: 14px; fill: ${t.text}; letter-spacing: 2px; font-weight: 600; }
-  .t-sub { font-size: 11px; fill: ${t.muted}; }
+  .t-h { font-size: 15px; fill: ${t.text}; letter-spacing: 1.6px; font-weight: 800; }
+  .t-sub { font-size: 11px; fill: ${t.secondary}; }
   .t-label { font-size: 12px; fill: ${t.secondary}; }
-  .t-value { font-size: 11px; fill: ${t.muted}; }
-  .t-subhdr { font-size: 11px; fill: ${t.secondary}; letter-spacing: 1px; font-weight: 600; }
-  .t-stat-label { font-size: 10px; fill: ${t.secondary}; font-weight: 600; }
-  .t-stat-value { font-size: 22px; font-weight: 700; }
+  .t-value { font-size: 11px; fill: ${t.secondary}; }
+  .t-subhdr { font-size: 11px; fill: ${t.secondary}; letter-spacing: 1px; font-weight: 800; }
+  .t-stat-label { font-size: 10px; fill: ${t.secondary}; font-weight: 800; letter-spacing: 0.8px; }
+  .t-stat-value { font-size: 24px; font-weight: 800; }
   .t-card-title { font-size: 12px; fill: ${t.link}; font-weight: 700; }
   .t-card-detail { font-size: 11px; fill: ${t.secondary}; }
   .t-pill { font-size: 11px; font-weight: 600; }
   .t-bullet { font-size: 12px; fill: ${t.text}; }
   .bg-fill { fill: ${t.bg}; }
   .card-fill { fill: ${t.cardBg}; }
+  .surface-fill { fill: ${t.cardBg}; }
+  .surface-stroke { stroke: ${t.border}; }
   .border-stroke { stroke: ${t.border}; }
   .muted-fill { fill: ${t.muted}; }
   .secondary-fill { fill: ${t.secondary}; }
+  .soft-line { stroke: ${t.border}; stroke-opacity: 0.45; }
 
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
@@ -77264,36 +77358,326 @@ void Fragment;
 
 
 
+function Background({ width, height }) {
+    return (jsx_factory_h(Fragment, null,
+        jsx_factory_h("rect", { width: width, height: height, rx: "12", className: "bg-fill" }),
+        jsx_factory_h("path", { d: `M ${width - 260} 0 L ${width} 0 L ${width} ${height} L ${width - 420} ${height} Z`, fill: BAR_COLORS[0], opacity: "0.05" }),
+        jsx_factory_h("path", { d: `M 0 ${height - 280} L 310 ${height} L 0 ${height} Z`, fill: BAR_COLORS[5], opacity: "0.05" })));
+}
+function SectionSurface({ y, height, color, }) {
+    const x = 12;
+    const width = theme_LAYOUT.width - 24;
+    return (jsx_factory_h(Fragment, null,
+        jsx_factory_h("rect", { x: x, y: y, width: width, height: height, rx: "14", className: "surface-fill surface-stroke", "stroke-width": "1", opacity: "0.92" }),
+        jsx_factory_h("rect", { x: x, y: y, width: "4", height: height, rx: "2", fill: color })));
+}
 function wrapSectionSvg(bodySvg, height, mode = "dark") {
     const { width } = theme_LAYOUT;
     return (jsx_factory_h("svg", { xmlns: "http://www.w3.org/2000/svg", width: width, height: height, viewBox: `0 0 ${width} ${height}` },
         jsx_factory_h(StyleDefs, { mode: mode }),
-        jsx_factory_h("rect", { width: width, height: height, rx: "12", className: "bg-fill" }),
+        jsx_factory_h(Background, { width: width, height: height }),
+        jsx_factory_h(SectionSurface, { y: 12, height: height - 24, color: BAR_COLORS[0] }),
         bodySvg));
 }
 function generateFullSvg(sections, mode = "dark") {
     const { width, padY, sectionGap } = theme_LAYOUT;
     let y = padY;
     let bodySvg = "";
-    for (const section of sections) {
+    for (let index = 0; index < sections.length; index++) {
+        const section = sections[index];
+        const sectionTop = y - 12;
         const header = renderSectionHeader(section.title, section.subtitle, y);
-        bodySvg += header.svg;
-        y += header.height;
+        let sectionSvg = header.svg;
+        let sectionHeight = header.height;
         if (section.renderBody) {
-            const body = section.renderBody(y);
-            bodySvg += body.svg;
-            y += body.height + sectionGap;
+            const body = section.renderBody(y + header.height);
+            sectionSvg += body.svg;
+            sectionHeight += body.height;
         }
+        const surfaceHeight = sectionHeight + 24;
+        bodySvg += (jsx_factory_h(SectionSurface, { y: sectionTop, height: surfaceHeight, color: BAR_COLORS[index % BAR_COLORS.length] }));
+        bodySvg += sectionSvg;
+        y += sectionHeight + sectionGap;
     }
-    const totalHeight = y + padY;
+    const totalHeight = y + padY - sectionGap;
     return (jsx_factory_h("svg", { xmlns: "http://www.w3.org/2000/svg", width: width, height: totalHeight, viewBox: `0 0 ${width} ${totalHeight}` },
         jsx_factory_h(StyleDefs, { mode: mode }),
-        jsx_factory_h("rect", { width: width, height: totalHeight, rx: "12", className: "bg-fill" }),
+        jsx_factory_h(Background, { width: width, height: totalHeight }),
         bodySvg));
 }
 
 // EXTERNAL MODULE: ./src/config.ts + 74 modules
 var src_config = __nccwpck_require__(7306);
+;// CONCATENATED MODULE: ./src/examples.ts
+const EXAMPLE_TEMPLATE_PRESETS = [
+    "showcase",
+    "ecosystem",
+    "modern",
+    "classic",
+    "minimal",
+];
+const PRESET_LABELS = {
+    showcase: "Showcase",
+    ecosystem: "Ecosystem",
+    modern: "Modern",
+    classic: "Classic",
+    minimal: "Minimal",
+};
+const PRESET_DESCRIPTIONS = {
+    showcase: "Full profile story with project spotlight, metric visuals, portfolio, and impact.",
+    ecosystem: "Portfolio-first view organized by stack layers and project categories.",
+    modern: "Focused profile layout with spotlight projects and the core visual metrics.",
+    classic: "Metrics-only presentation for profile READMEs that already have narrative copy.",
+    minimal: "Compact language and rhythm snapshot for a restrained profile section.",
+};
+function buildExamplesGallery({ username, configPath, generatedAt = new Date().toISOString().split("T")[0], presets, }) {
+    const source = configPath ? ` using \`${configPath}\`` : "";
+    const rows = presets
+        .map((preset) => {
+        const label = PRESET_LABELS[preset.name];
+        const sections = preset.sections.join(", ");
+        return `| [${label}](./${preset.name}/README.md) | <img src="./${preset.name}/index.svg" width="360" alt="${label} preset preview for @${username}"> | ${sections} |`;
+    })
+        .join("\n");
+    return [
+        "# GitHub Insights Examples",
+        "",
+        `Generated for [@${username}](https://github.com/${username})${source}.`,
+        "",
+        `Last generated: ${generatedAt}`,
+        "",
+        "| Preset | Preview | Sections |",
+        "|--------|---------|----------|",
+        rows,
+        "",
+    ].join("\n");
+}
+function escapeHtml(value) {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+function buildExamplesHtmlGallery({ username, configPath, generatedAt = new Date().toISOString().split("T")[0], presets, }) {
+    const source = configPath
+        ? ` using <code>${escapeHtml(configPath)}</code>`
+        : "";
+    const [featured, ...secondaryPresets] = presets;
+    const renderCard = (preset, variant) => {
+        const label = PRESET_LABELS[preset.name];
+        const sections = preset.sections
+            .map((section) => `<span>${escapeHtml(section)}</span>`)
+            .join("");
+        return `<article class="example-card ${variant}">
+  <header>
+    <div>
+      <p class="eyebrow">${escapeHtml(preset.name)}</p>
+      <h2>${escapeHtml(label)}</h2>
+    </div>
+    <a href="./${preset.name}/README.md">README</a>
+  </header>
+  <a class="preview-link" href="./${preset.name}/index.svg">
+    <img src="./${preset.name}/index.svg" alt="${escapeHtml(label)} preset preview for @${username}" loading="lazy">
+  </a>
+  <div class="card-copy">
+    <p>${escapeHtml(PRESET_DESCRIPTIONS[preset.name])}</p>
+    <div class="sections">${sections}</div>
+  </div>
+</article>`;
+    };
+    const cards = secondaryPresets
+        .map((preset) => renderCard(preset, "compact"))
+        .join("\n");
+    const featuredCard = featured ? renderCard(featured, "featured") : "";
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Insights Examples for @${escapeHtml(username)}</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070a10;
+      --panel: #111827;
+      --panel-strong: #182234;
+      --text: #eef6ff;
+      --muted: #94a3b8;
+      --line: #2f3b4f;
+      --accent: #45b3ff;
+      --green: #45d483;
+      --gold: #f6b342;
+      --cyan: #2dd4bf;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        linear-gradient(135deg, rgba(69, 179, 255, 0.12), transparent 32rem),
+        linear-gradient(315deg, rgba(45, 212, 191, 0.08), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+    }
+    main {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 56px;
+    }
+    .page-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      background: rgba(17, 24, 39, 0.82);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+    .meta {
+      text-align: right;
+      min-width: max-content;
+      font-size: 13px;
+    }
+    .hero {
+      margin-bottom: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
+    .example-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.88);
+      overflow: hidden;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
+    }
+    .example-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(69, 179, 255, 0.12), rgba(246, 179, 66, 0.08)), var(--panel-strong);
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .preview-link {
+      display: block;
+      padding: 14px;
+      background: #0b0f14;
+    }
+    .featured .preview-link {
+      padding: 18px;
+      max-height: 1040px;
+      overflow: hidden;
+    }
+    .preview-link img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+    .compact .preview-link {
+      max-height: 440px;
+      overflow: hidden;
+    }
+    .card-copy {
+      padding: 14px 16px 16px;
+      border-top: 1px solid var(--line);
+      background: rgba(24, 34, 52, 0.68);
+    }
+    .sections {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .sections span {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.4;
+      background: rgba(7, 10, 16, 0.55);
+    }
+    code {
+      color: var(--text);
+      background: #010409;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+    @media (max-width: 700px) {
+      main { width: min(100% - 20px, 1180px); padding-top: 20px; }
+      .page-header { display: block; }
+      .meta { margin-top: 12px; text-align: left; min-width: 0; }
+      .grid { grid-template-columns: 1fr; }
+      h1 { font-size: 28px; }
+    }
+    @media (min-width: 701px) and (max-width: 1100px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="page-header">
+      <div>
+        <h1>GitHub Insights Examples</h1>
+        <p>Generated for <a href="https://github.com/${escapeHtml(username)}">@${escapeHtml(username)}</a>${source}.</p>
+      </div>
+      <p class="meta">Last generated: ${escapeHtml(generatedAt)}</p>
+    </section>
+    <section class="hero">
+${featuredCard}
+    </section>
+    <section class="grid">
+${cards}
+    </section>
+  </main>
+</body>
+</html>
+`;
+}
+
 ;// CONCATENATED MODULE: ./src/components/contribution-rhythm.tsx
 /** @jsx h */
 /** @jsxFrag Fragment */
@@ -77357,13 +77741,13 @@ function renderContributionRhythm(rhythm, y) {
     const svg = (jsx_factory_h(Fragment, null,
         guidesSvg.join(""),
         spokesSvg.join(""),
-        jsx_factory_h("polygon", { points: points, fill: BAR_COLORS[0], "fill-opacity": "0.2", stroke: BAR_COLORS[0], "stroke-width": "2", "stroke-opacity": "0.8", className: "fade-2", style: `transform-origin: ${radarCx}px ${radarCy}px` }),
+        jsx_factory_h("polygon", { points: points, fill: BAR_COLORS[0], "fill-opacity": "0.3", stroke: BAR_COLORS[0], "stroke-width": "3", "stroke-opacity": "0.95", className: "fade-2", style: `transform-origin: ${radarCx}px ${radarCy}px` }),
         rhythm.dayTotals.map((val, i) => {
             const angle = (i * 2 * Math.PI) / 7 - Math.PI / 2;
             const r = (val / maxVal) * radarR;
             const px = radarCx + r * Math.cos(angle);
             const py = radarCy + r * Math.sin(angle);
-            return (jsx_factory_h("circle", { key: DAY_NAMES[i], cx: px, cy: py, r: "3", fill: BAR_COLORS[0], className: `fade-${Math.min(i + 1, 6)}` }));
+            return (jsx_factory_h("circle", { key: DAY_NAMES[i], cx: px, cy: py, r: "3", fill: BAR_COLORS[0], stroke: "#ffffff", "stroke-opacity": "0.45", "stroke-width": "1", className: `fade-${Math.min(i + 1, 6)}` }));
         }),
         labelsSvg.join(""),
         statsSvg.join("")));
@@ -77424,8 +77808,8 @@ function renderLanguageVelocity(velocity, y) {
         return { svg: "", height: 0 };
     const { padX } = theme_LAYOUT;
     const chartWidth = 760;
-    const chartHeight = 140;
-    const labelHeight = 20;
+    const chartHeight = 152;
+    const labelHeight = 28;
     const totalHeight = chartHeight + labelHeight;
     // Collect all unique languages across all months
     const langSet = new Map();
@@ -77512,7 +77896,7 @@ function renderLanguageVelocity(velocity, y) {
         return { x, label: monthName };
     });
     const svg = (jsx_factory_h(Fragment, null,
-        paths.map((p, i) => (jsx_factory_h("path", { key: p.name, d: p.path, fill: p.color, "fill-opacity": "0.75", className: `fade-${Math.min(i + 1, 6)}` }))),
+        paths.map((p, i) => (jsx_factory_h("path", { key: p.name, d: p.path, fill: p.color, "fill-opacity": "0.88", className: `fade-${Math.min(i + 1, 6)}` }))),
         (() => {
             let legendX = padX;
             return topLangs.map((name) => {
@@ -77520,7 +77904,7 @@ function renderLanguageVelocity(velocity, y) {
                 const x = legendX;
                 legendX += name.length * 7 + 28;
                 return (jsx_factory_h(Fragment, null,
-                    jsx_factory_h("rect", { x: x, y: y + chartHeight + 6, width: "8", height: "8", rx: "2", fill: color, opacity: "0.85" }),
+                    jsx_factory_h("rect", { x: x, y: y + chartHeight + 6, width: "8", height: "8", rx: "2", fill: color, opacity: "0.95" }),
                     jsx_factory_h("text", { x: x + 12, y: y + chartHeight + 14, className: "t t-value" }, svg_utils_escapeXml(name))));
             });
         })(),
@@ -77582,7 +77966,9 @@ function renderProjectConstellation(bars, y) {
         // Project name
         svg += (jsx_factory_h("text", { x: padX + 8, y: curY + 16, className: `t t-card-title fade-${delay}` }, svg_utils_escapeXml(truncate(bar.name, 24))));
         // Complexity bar
-        svg += (jsx_factory_h("rect", { x: barStartX, y: curY + 8, width: barWidth, height: "14", rx: "4", fill: bar.primaryColor, "fill-opacity": "0.7", className: `fade-${delay}` }));
+        svg += (jsx_factory_h(Fragment, null,
+            jsx_factory_h("rect", { x: barStartX, y: curY + 8, width: barWidth, height: "14", rx: "4", fill: bar.primaryColor, "fill-opacity": "0.92", className: `fade-${delay}` }),
+            jsx_factory_h("rect", { x: barStartX, y: curY + 8, width: barWidth, height: "14", rx: "4", fill: "#ffffff", opacity: "0.08", className: `fade-${delay}` })));
         // Star count
         svg += (jsx_factory_h("text", { x: starX, y: curY + 16, className: `t t-value fade-${delay}` }, `\u2605 ${bar.stars.toLocaleString()}`));
         // Secondary language tags
@@ -77591,8 +77977,8 @@ function renderProjectConstellation(bars, y) {
             for (const lang of secondaryLangs.slice(0, 5)) {
                 const langColor = langColorMap.get(lang);
                 svg += (jsx_factory_h(Fragment, null,
-                    jsx_factory_h("circle", { cx: dotX + 4, cy: curY + rowBaseHeight + 4, r: "3", fill: langColor, className: `${langColor ? "" : "muted-fill"} fade-${delay}`, "fill-opacity": "0.6" }),
-                    jsx_factory_h("text", { x: dotX + 10, y: curY + rowBaseHeight + 7, className: `t muted-fill fade-${delay}`, "font-size": "9" }, svg_utils_escapeXml(truncate(lang, 10)))));
+                    jsx_factory_h("circle", { cx: dotX + 4, cy: curY + rowBaseHeight + 4, r: "3", fill: langColor, className: `$langColor ? "" : "muted-fill"fade-$delay`, "fill-opacity": "0.6" }),
+                    jsx_factory_h("text", { x: dotX + 10, y: curY + rowBaseHeight + 7, className: `t muted-fill fade-$delay`, "font-size": "9" }, svg_utils_escapeXml(truncate(lang, 10)))));
                 dotX += Math.min(lang.length * 6 + 20, 80);
             }
         }
@@ -78356,12 +78742,9 @@ const computeStackLayout = (projects, repos) => {
     // Group projects by stack layer
     const layerProjects = new Map();
     for (const project of projects) {
-        const category = project.category ||
-            (repoMap.has(project.name)
-                ? heuristicCategory(repoMap.get(project.name))
-                : "Other");
-        const layerDef = STACK_LAYER_MAP[category] || STACK_LAYER_MAP["Other"];
         const repo = repoMap.get(project.name);
+        const category = project.category || (repo ? heuristicCategory(repo) : "Other");
+        const layerDef = STACK_LAYER_MAP[category] || STACK_LAYER_MAP.Other;
         const stackProject = {
             name: project.name,
             url: project.url,
@@ -78370,10 +78753,12 @@ const computeStackLayout = (projects, repos) => {
             primaryColor: pickPrimaryColor(project.languages, repo),
             complexity: repo ? complexityScore(repo) : 0,
         };
-        if (!layerProjects.has(layerDef.rank)) {
-            layerProjects.set(layerDef.rank, { layer: layerDef, projects: [] });
+        let layer = layerProjects.get(layerDef.rank);
+        if (!layer) {
+            layer = { layer: layerDef, projects: [] };
+            layerProjects.set(layerDef.rank, layer);
         }
-        layerProjects.get(layerDef.rank).projects.push(stackProject);
+        layer.projects.push(stackProject);
     }
     // Sort projects within each layer by complexity desc, cap at 4
     const layers = [];
@@ -78393,13 +78778,16 @@ const computeStackLayout = (projects, repos) => {
 // ── Insights Report Builder ────────────────────────────────────────────────
 function buildInsightsReport(params) {
     const { username, displayName, profile, repos, contributionData, aiClassifications, constellationGroupBy, excludeArchived, } = params;
-    const languages = aggregateLanguages(repos);
-    const complexProjects = getTopProjectsByComplexity(repos);
+    const visibleRepos = excludeArchived
+        ? repos.filter((repo) => !repo.isArchived)
+        : repos;
+    const languages = aggregateLanguages(visibleRepos);
+    const complexProjects = getTopProjectsByComplexity(visibleRepos);
     const { active: activeProjects, maintained: maintainedProjects, inactive: inactiveProjects, archived: archivedProjects, } = splitProjectsByRecency(repos, contributionData, aiClassifications);
-    const velocity = computeLanguageVelocity(contributionData, repos);
+    const velocity = computeLanguageVelocity(contributionData, visibleRepos);
     const rhythm = computeContributionRhythm(contributionData);
-    const constellation = computeConstellationLayout(complexProjects, repos, constellationGroupBy);
-    const spotlightProjects = computeSpotlightProjects(repos, contributionData, aiClassifications);
+    const constellation = computeConstellationLayout(complexProjects, visibleRepos, constellationGroupBy);
+    const spotlightProjects = computeSpotlightProjects(visibleRepos, contributionData, aiClassifications);
     // Build allProjects and categorizedProjects
     const includeArchived = !excludeArchived;
     const allProjectItems = [
@@ -78783,6 +79171,8 @@ function getTemplate(_name) {
 
 
 
+
+
 // ── Git helper ──────────────────────────────────────────────────────────────
 function git(args) {
     return new Promise((resolve, reject) => {
@@ -78809,7 +79199,6 @@ async function runPipeline(config, cb) {
         ? config.requestedSections
         : userConfig.sections || [];
     const resolvedSections = (0,src_config/* resolveTemplateSections */.jt)(templateName, requestedSections);
-    const svgSectionsNeeded = new Set(resolvedSections.filter((s) => SVG_SECTION_KEYS.includes(s)));
     const prompts = resolvePrompts(userConfig.ai);
     if (!config.token)
         throw new Error("github-token is required");
@@ -78829,21 +79218,34 @@ async function runPipeline(config, cb) {
     // ── Classify ──────────────────────────────────────────────────────────────
     const failFast = config.failFast || userConfig.fail_fast || false;
     const exportJson = config.exportJson || userConfig.export_json || false;
+    const cacheEnabled = config.cache !== false && userConfig.cache !== false;
+    const aiCache = cacheEnabled
+        ? AICache.load(`${config.outputDir}/.ai-cache.json`)
+        : undefined;
     cb.onPhaseStart("classify", "Classifying projects");
     const classificationInputs = buildClassificationInputs(repos, contributionData);
+    const classificationHash = hashAIInputs("classifications", classificationInputs, prompts.classification);
     let aiClassifications = [];
-    try {
-        aiClassifications = await fetchProjectClassifications(config.token, classificationInputs, prompts.classification);
+    const cachedClassifications = aiCache?.get("classifications", classificationHash);
+    if (cachedClassifications) {
+        aiClassifications = cachedClassifications;
+        cb.onProgress("Classification inputs unchanged, using cached AI results");
     }
-    catch (err) {
-        if (failFast)
-            throw err;
-        const msg = err instanceof errors/* InsightsError */.KH
-            ? `${err.message} [${err.code}]`
-            : String(err);
-        cb.onProgress(`AI classification unavailable (${msg}), using heuristics`);
+    else {
+        try {
+            aiClassifications = await fetchProjectClassifications(config.token, classificationInputs, prompts.classification);
+            aiCache?.set("classifications", classificationHash, aiClassifications);
+        }
+        catch (err) {
+            if (failFast)
+                throw err;
+            const msg = err instanceof errors/* InsightsError */.KH
+                ? `${err.message} [${err.code}]`
+                : String(err);
+            cb.onProgress(`AI classification unavailable (${msg}), using heuristics`);
+        }
     }
-    cb.onPhaseComplete("classify", `${aiClassifications.length} AI-classified, ${repos.length - aiClassifications.length} heuristic`);
+    cb.onPhaseComplete("classify", `${aiClassifications.length} AI-classified${cachedClassifications ? " (cached)" : ""}, ${repos.length - aiClassifications.length} heuristic`);
     // ── Transform ─────────────────────────────────────────────────────────────
     cb.onPhaseStart("transform", "Computing metrics");
     const displayName = userConfig.name || userProfile.name || config.username;
@@ -78866,31 +79268,44 @@ async function runPipeline(config, cb) {
         contributionData: report.contributionData,
         constellationGroupBy: report.constellationGroupBy,
     });
-    let activeSections = sectionDefs.filter((s) => s.renderBody);
-    if (svgSectionsNeeded.size > 0) {
+    const getActiveSectionsFor = (sections) => {
+        const svgSectionsNeeded = new Set(sections.filter((s) => SVG_SECTION_KEYS.includes(s)));
+        let sectionsForPreset = sectionDefs.filter((s) => s.renderBody);
+        if (svgSectionsNeeded.size === 0)
+            return sectionsForPreset;
         const allowedFilenames = new Set([...svgSectionsNeeded].map((key) => SECTION_KEYS[key]).filter(Boolean));
-        activeSections = activeSections.filter((s) => allowedFilenames.has(s.filename));
-    }
+        sectionsForPreset = sectionsForPreset.filter((s) => allowedFilenames.has(s.filename));
+        return sectionsForPreset;
+    };
+    const activeSections = getActiveSectionsFor(resolvedSections);
     cb.onPhaseComplete("transform", `${activeSections.length} sections`);
+    const writeSvgSet = (targetDir, sections, options = {}) => {
+        (0,external_node_fs_.mkdirSync)(targetDir, { recursive: true });
+        for (const section of sections) {
+            if (!section.renderBody)
+                continue;
+            const { svg, height } = renderSection(section.title, section.subtitle, section.renderBody);
+            (0,external_node_fs_.writeFileSync)(`${targetDir}/${section.filename}`, wrapSectionSvg(svg, height, "dark"));
+            const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
+            (0,external_node_fs_.writeFileSync)(`${targetDir}/${lightFilename}`, wrapSectionSvg(svg, height, "light"));
+            if (options.includeJson && section.data !== undefined) {
+                const jsonFilename = section.filename.replace(/\.svg$/, ".json");
+                (0,external_node_fs_.writeFileSync)(`${targetDir}/${jsonFilename}`, JSON.stringify(section.data, null, 2));
+                if (options.logFiles)
+                    cb.onProgress(`Wrote ${jsonFilename}`);
+            }
+            if (options.logFiles)
+                cb.onProgress(`Wrote ${section.filename} (+light)`);
+        }
+        (0,external_node_fs_.writeFileSync)(`${targetDir}/index.svg`, generateFullSvg(sections, "dark"));
+        (0,external_node_fs_.writeFileSync)(`${targetDir}/index-light.svg`, generateFullSvg(sections, "light"));
+    };
     // ── Render SVGs ───────────────────────────────────────────────────────────
     cb.onPhaseStart("render-svg", "Rendering SVGs");
-    (0,external_node_fs_.mkdirSync)(config.outputDir, { recursive: true });
-    for (const section of activeSections) {
-        if (!section.renderBody)
-            continue;
-        const { svg, height } = renderSection(section.title, section.subtitle, section.renderBody);
-        (0,external_node_fs_.writeFileSync)(`${config.outputDir}/${section.filename}`, wrapSectionSvg(svg, height, "dark"));
-        const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
-        (0,external_node_fs_.writeFileSync)(`${config.outputDir}/${lightFilename}`, wrapSectionSvg(svg, height, "light"));
-        if (exportJson && section.data !== undefined) {
-            const jsonFilename = section.filename.replace(/\.svg$/, ".json");
-            (0,external_node_fs_.writeFileSync)(`${config.outputDir}/${jsonFilename}`, JSON.stringify(section.data, null, 2));
-            cb.onProgress(`Wrote ${jsonFilename}`);
-        }
-        cb.onProgress(`Wrote ${section.filename} (+light)`);
-    }
-    (0,external_node_fs_.writeFileSync)(`${config.outputDir}/index.svg`, generateFullSvg(activeSections, "dark"));
-    (0,external_node_fs_.writeFileSync)(`${config.outputDir}/index-light.svg`, generateFullSvg(activeSections, "light"));
+    writeSvgSet(config.outputDir, activeSections, {
+        includeJson: exportJson,
+        logFiles: true,
+    });
     cb.onPhaseComplete("render-svg", `${activeSections.length * 2 + 2} SVG files`);
     // ── Write files ───────────────────────────────────────────────────────────
     cb.onPhaseStart("write-files", "Writing output files");
@@ -78899,47 +79314,60 @@ async function runPipeline(config, cb) {
         filesWritten.push(`${config.outputDir}/${s.filename}`);
     }
     cb.onPhaseComplete("write-files", `${filesWritten.length} files`);
-    // ── README ────────────────────────────────────────────────────────────────
-    if (config.readmePath && config.readmePath !== "none") {
-        cb.onPhaseStart("generate-readme", "Generating README");
-        const svgDir = (0,external_node_path_.relative)((0,external_node_path_.dirname)(config.readmePath), config.outputDir) || ".";
+    // ── README + local examples ──────────────────────────────────────────────
+    const shouldWriteReadme = Boolean(config.readmePath && config.readmePath !== "none");
+    const shouldWriteExamples = Boolean(!process.env.CI && config.examplesDir && config.examplesDir !== "none");
+    if (shouldWriteReadme || shouldWriteExamples) {
+        cb.onPhaseStart("generate-readme", shouldWriteReadme ? "Generating README" : "Generating examples");
         const socialBadges = buildSocialBadges(userProfile);
         let preamble = loadPreamble(userConfig.preamble);
         if (!preamble) {
-            cb.onProgress("Generating preamble with AI...");
-            try {
-                preamble = await fetchAIPreamble(config.token, {
-                    username: config.username,
-                    profile: userProfile,
-                    userConfig,
-                    languages: report.languages,
-                    spotlightProjects: report.spotlightProjects,
-                    complexProjects: report.allProjects,
-                }, prompts.preamble);
+            const preambleContext = {
+                username: config.username,
+                profile: userProfile,
+                userConfig,
+                languages: report.languages,
+                spotlightProjects: report.spotlightProjects,
+                complexProjects: report.allProjects,
+            };
+            const preambleHash = hashAIInputs("preamble", preambleContext, prompts.preamble);
+            preamble = aiCache?.get("preamble", preambleHash);
+            if (preamble) {
+                cb.onProgress("Preamble inputs unchanged, using cached AI preamble");
             }
-            catch (err) {
-                if (failFast)
-                    throw err;
-                const msg = err instanceof errors/* InsightsError */.KH
-                    ? `${err.message} [${err.code}]`
-                    : String(err);
-                cb.onProgress(`AI preamble unavailable (${msg}), skipping`);
-            }
-        }
-        const svgs = activeSections.map((s) => ({
-            label: s.title,
-            path: `${svgDir}/${s.filename}`,
-        }));
-        const sectionSvgs = {};
-        const sectionSvgsLight = {};
-        for (const [key, filename] of Object.entries(SECTION_KEYS)) {
-            if (activeSections.some((s) => s.filename === filename)) {
-                sectionSvgs[key] = `${svgDir}/${filename}`;
-                sectionSvgsLight[key] =
-                    `${svgDir}/${filename.replace(/\.svg$/, "-light.svg")}`;
+            else {
+                cb.onProgress("Generating preamble with AI...");
+                try {
+                    preamble = await fetchAIPreamble(config.token, preambleContext, prompts.preamble);
+                    aiCache?.set("preamble", preambleHash, preamble);
+                }
+                catch (err) {
+                    if (failFast)
+                        throw err;
+                    const msg = err instanceof errors/* InsightsError */.KH
+                        ? `${err.message} [${err.code}]`
+                        : String(err);
+                    cb.onProgress(`AI preamble unavailable (${msg}), using fallback`);
+                }
             }
         }
-        const template = getTemplate(templateName);
+        preamble ||= userConfig.bio || userProfile.bio || "";
+        const buildSvgRefs = (sections, svgDir) => {
+            const svgs = sections.map((s) => ({
+                label: s.title,
+                path: `${svgDir}/${s.filename}`,
+            }));
+            const sectionSvgs = {};
+            const sectionSvgsLight = {};
+            for (const [key, filename] of Object.entries(SECTION_KEYS)) {
+                if (sections.some((s) => s.filename === filename)) {
+                    sectionSvgs[key] = `${svgDir}/${filename}`;
+                    sectionSvgsLight[key] =
+                        `${svgDir}/${filename.replace(/\.svg$/, "-light.svg")}`;
+                }
+            }
+            return { svgs, sectionSvgs, sectionSvgsLight };
+        };
         const contextBase = {
             username: config.username,
             name: displayName,
@@ -78948,7 +79376,6 @@ async function runPipeline(config, cb) {
             title: userConfig.title,
             bio: userConfig.bio,
             preamble,
-            templateName,
             profile: userProfile,
             activeProjects: report.activeProjects,
             maintainedProjects: report.maintainedProjects,
@@ -78964,52 +79391,59 @@ async function runPipeline(config, cb) {
             contributionData: report.contributionData,
             socialBadges,
             spotlightProjects: report.spotlightProjects,
-            resolvedSections,
         };
-        const readme = template({
-            ...contextBase,
-            svgs,
-            sectionSvgs,
-            sectionSvgsLight,
-            svgDir,
-        });
-        (0,external_node_fs_.writeFileSync)(config.readmePath, readme);
-        // Local template preview
-        if (!process.env.CI) {
-            const tplDir = "examples/default";
-            (0,external_node_fs_.mkdirSync)(tplDir, { recursive: true });
-            (0,external_node_fs_.copyFileSync)(`${config.outputDir}/index.svg`, `${tplDir}/index.svg`);
-            (0,external_node_fs_.copyFileSync)(`${config.outputDir}/index-light.svg`, `${tplDir}/index-light.svg`);
-            for (const section of activeSections) {
-                (0,external_node_fs_.copyFileSync)(`${config.outputDir}/${section.filename}`, `${tplDir}/${section.filename}`);
-                const lightFilename = section.filename.replace(/\.svg$/, "-light.svg");
-                (0,external_node_fs_.copyFileSync)(`${config.outputDir}/${lightFilename}`, `${tplDir}/${lightFilename}`);
-            }
-            const previewSvgs = activeSections.map((s) => ({
-                label: s.title,
-                path: `./${s.filename}`,
-            }));
-            const previewSectionSvgs = {};
-            const previewSectionSvgsLight = {};
-            for (const [key, filename] of Object.entries(SECTION_KEYS)) {
-                if (activeSections.some((s) => s.filename === filename)) {
-                    previewSectionSvgs[key] = `./${filename}`;
-                    previewSectionSvgsLight[key] =
-                        `./${filename.replace(/\.svg$/, "-light.svg")}`;
-                }
-            }
-            const previewReadme = template({
+        const renderReadme = (readmeTemplateName, sections, readmeSections, svgDir) => {
+            const template = getTemplate(readmeTemplateName);
+            const svgRefs = buildSvgRefs(sections, svgDir);
+            return template({
                 ...contextBase,
-                svgs: previewSvgs,
-                sectionSvgs: previewSectionSvgs,
-                sectionSvgsLight: previewSectionSvgsLight,
-                svgDir: ".",
+                ...svgRefs,
+                templateName: readmeTemplateName,
+                resolvedSections: readmeSections,
+                svgDir,
             });
-            (0,external_node_fs_.writeFileSync)(`${tplDir}/README.md`, previewReadme);
-            cb.onProgress(`Preview at ${tplDir}/README.md`);
+        };
+        if (shouldWriteReadme) {
+            const svgDir = (0,external_node_path_.relative)((0,external_node_path_.dirname)(config.readmePath), config.outputDir) || ".";
+            const readme = renderReadme(templateName, activeSections, resolvedSections, svgDir);
+            (0,external_node_fs_.writeFileSync)(config.readmePath, readme);
         }
-        cb.onPhaseComplete("generate-readme", config.readmePath);
+        if (shouldWriteExamples && config.examplesDir) {
+            const examplePresets = EXAMPLE_TEMPLATE_PRESETS.map((presetName) => {
+                const presetSections = (0,src_config/* resolveTemplateSections */.jt)(presetName);
+                const presetActiveSections = getActiveSectionsFor(presetSections);
+                const presetDir = `${config.examplesDir}/${presetName}`;
+                writeSvgSet(presetDir, presetActiveSections);
+                (0,external_node_fs_.writeFileSync)(`${presetDir}/README.md`, renderReadme(presetName, presetActiveSections, presetSections, "."));
+                cb.onProgress(`Preview at ${presetDir}/README.md`);
+                return { name: presetName, sections: presetSections };
+            });
+            (0,external_node_fs_.writeFileSync)(`${config.examplesDir}/README.md`, buildExamplesGallery({
+                username: config.username,
+                configPath: config.configPath,
+                presets: examplePresets,
+            }));
+            (0,external_node_fs_.writeFileSync)(`${config.examplesDir}/index.html`, buildExamplesHtmlGallery({
+                username: config.username,
+                configPath: config.configPath,
+                presets: examplePresets,
+            }));
+            cb.onProgress(`Gallery at ${config.examplesDir}/README.md`);
+            cb.onProgress(`Browser gallery at ${config.examplesDir}/index.html`);
+        }
+        const outputs = [
+            ...(shouldWriteReadme ? [config.readmePath] : []),
+            ...(shouldWriteExamples && config.examplesDir
+                ? [
+                    `${config.examplesDir}/README.md`,
+                    `${config.examplesDir}/index.html`,
+                ]
+                : []),
+        ];
+        cb.onPhaseComplete("generate-readme", outputs.join(", "));
     }
+    // Persist AI outputs so unchanged inputs skip model calls next run.
+    aiCache?.save();
     // ── Commit + Push ─────────────────────────────────────────────────────────
     if (config.commitPush) {
         cb.onPhaseStart("commit-push", "Committing & pushing");
@@ -79046,7 +79480,7 @@ __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var ink_spinner__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(8078);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7919);
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__nccwpck_require__.n(react__WEBPACK_IMPORTED_MODULE_2__);
-/* harmony import */ var _pipeline_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(8109);
+/* harmony import */ var _pipeline_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(7752);
 var __webpack_async_dependencies__ = __webpack_handle_async_dependencies__([ink__WEBPACK_IMPORTED_MODULE_0__, ink_spinner__WEBPACK_IMPORTED_MODULE_1__]);
 ([ink__WEBPACK_IMPORTED_MODULE_0__, ink_spinner__WEBPACK_IMPORTED_MODULE_1__] = __webpack_async_dependencies__.then ? (await __webpack_async_dependencies__)() : __webpack_async_dependencies__);
 

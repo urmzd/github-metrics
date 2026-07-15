@@ -47,9 +47,19 @@ program
     process.env.OUTPUT_DIR || "assets/insights",
   )
   .option(
+    "--config-file <path>",
+    "Path to github-insights config file",
+    process.env.CONFIG_FILE,
+  )
+  .option(
     "--readme-path <path>",
     "README output path",
     process.env.README_PATH || (process.env.CI ? "README.md" : "none"),
+  )
+  .option(
+    "--examples-dir <dir>",
+    "Local examples output directory (set to 'none' to skip)",
+    process.env.EXAMPLES_DIR || (process.env.CI ? "none" : "examples"),
   )
   .option(
     "--template <name>",
@@ -61,6 +71,10 @@ program
     "--fail-fast",
     "Exit with an error instead of falling back to heuristics when AI is unavailable",
     false,
+  )
+  .option(
+    "--no-cache",
+    "Always call AI models, even when inputs are unchanged since the last run",
   )
   .option(
     "--verbose",
@@ -96,6 +110,7 @@ program
       commitMessage: "chore: update metrics",
       commitName: "",
       commitEmail: "",
+      configPath: opts.configFile,
       readmePath: opts.readmePath,
       templateName: opts.template as TemplateName,
       requestedSections: sectionsRaw
@@ -106,6 +121,8 @@ program
         : [],
       failFast: opts.failFast,
       exportJson: opts.format === "json",
+      cache: opts.cache,
+      examplesDir: opts.examplesDir,
     };
 
     if (opts.verbose) {
