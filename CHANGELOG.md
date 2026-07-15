@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.11.0 (2026-07-15)
+
+### Features
+
+- add AI output cache, examples gallery, and JSON export (#26) ([0ca9ba1](https://github.com/urmzd/github-insights/commit/0ca9ba16384c65a43d05e4cc931cd169b1908ffe))
+
+### Misc
+
+- bump GitHub Actions to Node 24 majors and switch app token to client-id ([1727b1d](https://github.com/urmzd/github-insights/commit/1727b1d6a5e825abba20d7a1db99cd161f03a6df))
+- **ci**: bump sr to v8, typed npm publisher ([1130637](https://github.com/urmzd/github-insights/commit/1130637e1f5c2df6f8f1c73a213083ba5b6da94b))
+- **ci**: remove unused force input from release workflow ([4af8266](https://github.com/urmzd/github-insights/commit/4af82669e5b077bad19fe7f81cc3d358c1acb810))
+- **community**: add GitHub community-health files ([d0ffff6](https://github.com/urmzd/github-insights/commit/d0ffff6efd5524f87c50434efec8c4874a83186b))
+- **fix**: standardize README format ([4d00682](https://github.com/urmzd/github-insights/commit/4d0068269f12e9991b672310d36e3d7b41169a87))
+
+[Full Changelog](https://github.com/urmzd/github-insights/compare/v3.10.5...v3.11.0)
+
+
 ## 3.10.5 (2026-04-19)
 
 ### Bug Fixes
